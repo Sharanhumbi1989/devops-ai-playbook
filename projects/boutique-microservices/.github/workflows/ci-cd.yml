@@ -1,0 +1,264 @@
+name: CI/CD Pipeline for Boutique Microservices
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: boutique
+
+jobs:
+  # Code Quality and Security Scanning
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Create .env file
+      run: |
+        echo "NODE_ENV=test" > .env
+        echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
+        echo "DATABASE_URL=${{ secrets.TEST_DATABASE_URL }}" >> .env
+
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd frontend && npm ci
+        cd ../backend && npm ci
+        cd services && for dir in */; do cd "$dir" && npm ci && cd ..; done
+
+    - name: Run tests
+      run: |
+        npm run test
+
+    - name: SonarQube Scan
+      uses: sonarqube-quality-gate-action@master
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    - name: Trivy Vulnerability Scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Build and Push Docker Images
+  build-and-push:
+    needs: code-quality
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    strategy:
+      matrix:
+        service: [frontend, gateway, auth-service, product-service, order-service, orders-service, user-service]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./${{ matrix.service == 'frontend' && 'frontend' || 'backend/services/' + matrix.service }}
+        file: ./${{ matrix.service == 'frontend' && 'frontend' || 'backend/services/' + matrix.service }}/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Run Trivy vulnerability scanner on image
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-image-results.sarif'
+
+    - name: Upload Trivy image scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-image-results.sarif'
+
+  # Deploy to Staging
+  deploy-staging:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Update kubeconfig
+      run: aws eks update-kubeconfig --name boutique-staging
+
+    - name: Deploy to staging
+      run: |
+        # Update image tags in manifests
+        kubectl set image deployment/frontend frontend=${{ env.REGISTRY }}/${{ github.repository }}/frontend:develop-${{ github.sha }} -n boutique
+        kubectl set image deployment/gateway gateway=${{ env.REGISTRY }}/${{ github.repository }}/gateway:develop-${{ github.sha }} -n boutique
+        kubectl set image deployment/auth-service auth-service=${{ env.REGISTRY }}/${{ github.repository }}/auth-service:develop-${{ github.sha }} -n boutique
+        kubectl set image deployment/product-service product-service=${{ env.REGISTRY }}/${{ github.repository }}/product-service:develop-${{ github.sha }} -n boutique
+        kubectl set image deployment/order-service order-service=${{ env.REGISTRY }}/${{ github.repository }}/order-service:develop-${{ github.sha }} -n boutique
+        kubectl set image deployment/orders-service orders-service=${{ env.REGISTRY }}/${{ github.repository }}/orders-service:develop-${{ github.sha }} -n boutique
+        kubectl set image deployment/user-service user-service=${{ env.REGISTRY }}/${{ github.repository }}/user-service:develop-${{ github.sha }} -n boutique
+        
+        # Wait for rollout
+        kubectl rollout status deployment/frontend -n boutique --timeout=300s
+        kubectl rollout status deployment/gateway -n boutique --timeout=300s
+        kubectl rollout status deployment/auth-service -n boutique --timeout=300s
+        kubectl rollout status deployment/product-service -n boutique --timeout=300s
+        kubectl rollout status deployment/order-service -n boutique --timeout=300s
+        kubectl rollout status deployment/orders-service -n boutique --timeout=300s
+        kubectl rollout status deployment/user-service -n boutique --timeout=300s
+
+  # Deploy to Production (Manual Approval)
+  deploy-production:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Update kubeconfig
+      run: aws eks update-kubeconfig --name boutique-production
+
+    - name: Deploy to production
+      run: |
+        # Update image tags in manifests
+        kubectl set image deployment/frontend frontend=${{ env.REGISTRY }}/${{ github.repository }}/frontend:main-${{ github.sha }} -n boutique
+        kubectl set image deployment/gateway gateway=${{ env.REGISTRY }}/${{ github.repository }}/gateway:main-${{ github.sha }} -n boutique
+        kubectl set image deployment/auth-service auth-service=${{ env.REGISTRY }}/${{ github.repository }}/auth-service:main-${{ github.sha }} -n boutique
+        kubectl set image deployment/product-service product-service=${{ env.REGISTRY }}/${{ github.repository }}/product-service:main-${{ github.sha }} -n boutique
+        kubectl set image deployment/order-service order-service=${{ env.REGISTRY }}/${{ github.repository }}/order-service:main-${{ github.sha }} -n boutique
+        kubectl set image deployment/orders-service orders-service=${{ env.REGISTRY }}/${{ github.repository }}/orders-service:main-${{ github.sha }} -n boutique
+        kubectl set image deployment/user-service user-service=${{ env.REGISTRY }}/${{ github.repository }}/user-service:main-${{ github.sha }} -n boutique
+        
+        # Wait for rollout with extended timeout for production
+        kubectl rollout status deployment/frontend -n boutique --timeout=600s
+        kubectl rollout status deployment/gateway -n boutique --timeout=600s
+        kubectl rollout status deployment/auth-service -n boutique --timeout=600s
+        kubectl rollout status deployment/product-service -n boutique --timeout=600s
+        kubectl rollout status deployment/order-service -n boutique --timeout=600s
+        kubectl rollout status deployment/orders-service -n boutique --timeout=600s
+        kubectl rollout status deployment/user-service -n boutique --timeout=600s
+
+    - name: Run smoke tests
+      run: |
+        # Wait for all services to be ready
+        kubectl wait --for=condition=ready pod -l app=frontend -n boutique --timeout=300s
+        kubectl wait --for=condition=ready pod -l app=gateway -n boutique --timeout=300s
+        kubectl wait --for=condition=ready pod -l app=auth-service -n boutique --timeout=300s
+        
+        # Get the load balancer URL
+        INGRESS_URL=$(kubectl get ingress boutique-ingress -n boutique -o jsonpath='{.spec.rules[0].host}')
+        echo "Application URL: https://$INGRESS_URL"
+        
+        # Basic health check
+        curl -f "https://$INGRESS_URL/api/health" || exit 1
+        curl -f "https://$INGRESS_URL/" || exit 1
+
+  # Security Scan on Running Deployment
+  security-scan:
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+
+    - name: Update kubeconfig
+      run: aws eks update-kubeconfig --name boutique-production
+
+    - name: Run security scan on live cluster
+      run: |
+        # Install Falco for runtime security monitoring
+        helm repo add falcosecurity https://falcosecurity.github.io/charts
+        helm repo update
+        
+        # Deploy Falco if not already deployed
+        helm upgrade --install falco falcosecurity/falco \
+          --namespace falco --create-namespace \
+          --set falco.jsonOutput=true \
+          --set falco.httpOutput.enabled=true \
+          --set falco.httpOutput.url=http://falco-eventcollector:2801
+
+        echo "Security monitoring enabled with Falco"
+
+    - name: Container runtime security check
+      run: |
+        # Check for privileged containers
+        kubectl get pods -n boutique -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.securityContext.privileged}{"\n"}{end}'
+
+        # Check for root user
+        kubectl get pods -n boutique -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.securityContext.runAsUser}{"\n"}{end}'
+
+        echo "Security checks completed"

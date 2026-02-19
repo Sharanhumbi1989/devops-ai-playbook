@@ -30,6 +30,71 @@ This guide outlines the steps to deploy the boutique microservices application o
 
 ---
 
+## Infrastructure Diagram
+
+```
+                                    ┌─────────────┐
+                                    │   Frontend  │
+                                    │ (Port 3000) │
+                                    │             │
+                                    └──────┬──────┘
+                                           │
+                                    ┌──────▼──────┐
+                                    │   Gateway   │
+                                    │  (Port 3001)│
+                                    │(API Gateway)│
+                                    └──────┬──────┘
+                                           │
+            ┌──────────────────────────────┼──────────────────────────────┐
+            │                              │                              │
+     ┌──────▼──────┐              ┌───────▼───────┐             ┌───────▼───────┐
+     │    Auth     │              │Product service│             │     Users     │
+     │  (Port 3002)│              │   (Port 3003) │             │  (Port 3006)  │
+     │  (Login,    │              │  (Catalog,    │             │  (Profile,    │
+     │  Register)  │              │   Inventory)  │             │   Manage)     │
+     └──────┬──────┘              └───────┬───────┘             └───────┬───────┘
+            │                              │                              │
+     ┌──────▼──────┐              ┌───────▼───────┐             ┌───────▼───────┐
+     │   Orders    │              │ Order Service │             │     Orders    │
+     │  (Port 3004)│              │   (Port 3005) │             │  (Management) │
+     │ (Cart,      │              │               │             │  (Port 3005)  │
+     │  Checkout)  │              │               │             └───────────────┘
+     └─────────────┘              └───────────────┘
+            │
+     ┌──────▼──────┐
+     │  PostgreSQL │
+     │  (Port 5432)│
+     │  (Database) │
+     └─────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Monitoring Stack                                    │
+│  ┌─────────────┐                           ┌─────────────┐                 │
+│  │ Prometheus  │◄──────────────────────────│   Grafana   │                 │
+│  │ (Port 9090)│                           │  (Port 3007) │                 │
+│  └─────────────┘                           └─────────────┘                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Service Overview
+
+| Service | Port | Role |
+|---------|------|------|
+| **Frontend** | 3000 (ext) → 80 (int) | React UI - User interface for the boutique application |
+| **Gateway** | 3001 | API Gateway - Routes requests to backend services, handles load balancing |
+| **Auth** | 3002 | Authentication - Login, register, JWT token management |
+| **Product Service** | 3003 | Product Catalog - Product listings, inventory management |
+| **Order Service** | 3004 | Order Processing - Cart, checkout, order placement |
+| **Orders** | 3005 | Order Management - Order history, tracking, management |
+| **User Service** | 3006 | User Management - User profiles, preferences, account management |
+| **PostgreSQL** | 5432 | Database - Stores all application data (auth_db, products_db, orders_db, users_db) |
+| **Prometheus** | 9090 | Monitoring - Metrics collection and storage |
+| **Grafana** | 3007 | Visualization - Dashboards and metrics visualization |
+
+---
+
 ## Local Development Setup (Manual Commands)
 
 If you want to run the application locally without Docker, follow these steps:
@@ -45,7 +110,20 @@ npm install
 
 ### Step 2: Build the Application
 
-Build all services:
+Build all backend services:
+
+```bash
+cd boutique-microservices
+npm run build:backend
+```
+
+Build frontend:
+
+```bash
+npm run build:frontend
+```
+
+Build everything:
 
 ```bash
 npm run build:frontend
@@ -58,7 +136,28 @@ npm run dev:frontend
 npm run dev:backend
 ```
 
-### Step 3: Run with Docker Compose
+### Step 3: Start the Services
+
+Start all backend services:
+
+```bash
+cd boutique-microservices
+npm run dev:backend
+```
+
+Start frontend:
+
+```bash
+npm run dev:frontend
+```
+
+Or start everything:
+
+```bash
+npm run dev
+```
+
+### Step 4: Run with Docker Compose
 
 Start all services using Docker Compose:
 
@@ -66,7 +165,7 @@ Start all services using Docker Compose:
 docker-compose -f docker-compose.yml up -d
 ```
 
-### Step 4: Verify Services
+### Step 5: Verify Services
 
 Check the running containers:
 
@@ -237,7 +336,11 @@ Get the Grafana admin password:
 kubectl get secret kube-prometheus-stack-grafana -n monitoring -o jsonpath="{.data.admin-password}" | base64 --decode
 ```
 
+<<<<<<< HEAD
 - Username: `admin`
+=======
+- Username: `Admin`
+>>>>>>> 8e1d9e7 (Updated the README file and package.json for local testing)
 
 ### ArgoCD
 
@@ -270,8 +373,16 @@ Add this to your shell profile for convenience:
 alias k=kubectl
 ```
 
+<<<<<<< HEAD
 ## Cleanup all the resources 
 
 ```bash
 terraform destroy --auto-approve
 ```
+=======
+# Cleanup all the resources
+
+```bash
+terraform destroy --auto-approve
+```
+>>>>>>> 8e1d9e7 (Updated the README file and package.json for local testing)

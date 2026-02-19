@@ -373,7 +373,7 @@ Add this to your shell profile for convenience:
 alias k=kubectl
 ```
 
-<<<<<<< HEAD
+
 ## Cleanup all the resources 
 
 ```bash
@@ -385,4 +385,3 @@ terraform destroy --auto-approve
 ```bash
 terraform destroy --auto-approve
 ```
->>>>>>> 8e1d9e7 (Updated the README file and package.json for local testing)

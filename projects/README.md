@@ -6,18 +6,16 @@ This guide outlines the steps to deploy the boutique microservices application o
 
 ## Important: GitHub Actions Secrets
 
-> **Note:** The GitHub Actions secrets are currently configured with Anish's AWS credentials for testing purposes. 
-> 
-> For your own deployment, please update the following secrets in your GitHub repository with your own credentials:
-> 
-> - `AWS_ACCESS_KEY_ID`
-> - `AWS_SECRET_ACCESS_KEY`
-> - `AWS_REGION`
-> - `AWS_ACCOUNT_ID`
-> 
-> Go to: **Settings → Secrets and variables → Actions** in your GitHub repository to update them.
+Before running the CI pipeline, add the following secrets to your GitHub repository:
 
-> Currently the pipeline is setup for branch name project-demo, to navigate to CI yml file **Actions -> click on any of the runs -> ci.yml 
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+- `AWS_ACCOUNT_ID`
+
+Go to: **Settings → Secrets and variables → Actions** in your GitHub repository.
+
+> The pipeline is configured for the `project-demo` branch. To view the workflow file: **Actions → click any run → ci.yml**
 ---
 
 ## Prerequisites

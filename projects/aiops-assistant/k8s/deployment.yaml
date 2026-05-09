@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: aiops-assistant
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: aiops-assistant
+
+  template:
+    metadata:
+      labels:
+        app: aiops-assistant
+
+    spec:
+      containers:
+      - name: aiops-assistant
+
+        image: aiops-assistant:latest
+
+        imagePullPolicy: Never
+
+        ports:
+        - containerPort: 8501
+
